@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站AI字幕抓取
 // @namespace    https://your.namespace.example
-// @version      1.2.0
-// @description  同时注入顶层与播放器iframe；拦截 ai_subtitle 的 fetch/XMLHttpRequest；子帧通过 postMessage 上报，面板只在顶层显示；导出 SRT/JSON。
+// @version      1.3.0
+// @description  同时注入顶层与播放器iframe；拦截 ai_subtitle 的 fetch/XMLHttpRequest；子帧通过 postMessage 上报，面板只在顶层显示；导出 SRT/JSON/TXT。
 // @author       you
 // @match        *://www.bilibili.com/*
 // @match        *://player.bilibili.com/*
@@ -42,6 +42,15 @@
     });
     return out.join('\n');
   };
+  // NEW: 导出纯文本（逐段合并为行，保留顺序，不含时间戳）
+  const toTXT = (j) => {
+    if (!j || !Array.isArray(j.body)) return '';
+    return j.body
+      .map(seg => String(seg.content ?? '').replace(/\r?\n/g, ' ').trim())
+      .filter(Boolean)
+      .join('\n');
+  };
+
   const getTitle = () =>
     (document.title || 'bilibili_video').replace(/_?(_?哔哩哔哩.*)$/g, '').trim() || 'bilibili_video';
   const downloadBlob = (blob, filename) => {
@@ -89,9 +98,9 @@
     if (!isTop) return;
     if (document.getElementById(PID)) return;
     GM_addStyle(`
-      #${PID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:320px;background:rgba(20,20,20,.92);color:#fff;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.35);font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,PingFang SC,Microsoft YaHei,sans-serif;overflow:hidden}
+      #${PID}{position:fixed;right:16px;bottom:16px;z-index:2147483647;width:340px;background:rgba(20,20,20,.92);color:#fff;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.35);font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,PingFang SC,Microsoft YaHei,sans-serif;overflow:hidden}
       #${PID} header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#2d2f33;font-weight:600}
-      #${PID} header button{border:none;border-radius:8px;background:#00AEEC;color:#fff;padding:6px 10px;cursor:pointer;font-size:12px}
+      #${PID} header button{border:none;border-radius:8px;background:#00AEEC;color:#fff;padding:6px 10px;cursor:pointer;font-size:12px;margin-left:6px}
       #${PID} .content{max-height:360px;overflow:auto;padding:8px}
       #${LID}{display:grid;gap:8px}
       #${LID} .item{background:#1f2125;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:8px}
@@ -108,6 +117,7 @@
       <header>
         <div>AI字幕捕获</div>
         <div>
+          <button id="as-copy-txt">复制最新TXT</button>
           <button id="as-copy">复制最新JSON</button>
           <button id="as-clear" style="background:#4b5563">清空</button>
         </div>
@@ -123,6 +133,14 @@
       if (!lastKey || !store.has(lastKey)) return alert('暂未捕获字幕。');
       try { GM_setClipboard(JSON.stringify(store.get(lastKey).data, null, 2)); alert('已复制最新轨道 JSON'); }
       catch { alert('复制失败'); }
+    });
+    el.querySelector('#as-copy-txt')?.addEventListener('click', () => {
+      if (!lastKey || !store.has(lastKey)) return alert('暂未捕获字幕。');
+      try {
+        const txt = toTXT(store.get(lastKey).data);
+        GM_setClipboard(txt);
+        alert('已复制最新轨道 TXT');
+      } catch { alert('复制失败'); }
     });
     el.querySelector('#as-clear')?.addEventListener('click', () => {
       store.clear(); order.length = 0; lastKey = null; refreshPanel();
@@ -151,6 +169,7 @@
         <div class="actions">
           <button data-k="${k}" data-act="srt">下载 SRT</button>
           <button data-k="${k}" data-act="json" class="secondary">下载 JSON</button>
+          <button data-k="${k}" data-act="txt" class="secondary">下载 TXT</button>
           <button data-k="${k}" data-act="preview" class="secondary">预览5条</button>
           <button data-k="${k}" data-act="set" class="secondary">设为最新</button>
         </div>
@@ -170,6 +189,9 @@
         } else if (act === 'json') {
           const blob = new Blob([JSON.stringify(e.data, null, 2)], { type: 'application/json;charset=utf-8' });
           downloadBlob(blob, `${title}.${(e.data.lang || 'unk')}.json`);
+        } else if (act === 'txt') { // NEW
+          const blob = new Blob([toTXT(e.data)], { type: 'text/plain;charset=utf-8' });
+          downloadBlob(blob, `${title}.${(e.data.lang || 'unk')}.txt`);
         } else if (act === 'preview') {
           const a = e.data.body || [];
           alert(a.slice(0, 5).map((s, i) => `#${i + 1} [${srtTime(s.from)}→${srtTime(s.to)}] ${s.content}`).join('\n') || '无');
